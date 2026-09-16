@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Web 服务运行时依赖（uvicorn app:app）。命令行界面另见 requirements-cli.txt。
+# Web 服务运行时依赖（uvicorn app:app）。
 langchain
 langchain-community
 langchain-text-splitters
@@ -13,3 +13,4 @@ rich
 requests
 fastapi
 uvicorn[standard]
+python-multipart  # FastAPI 的 File/UploadFile 表单上传（routers/knowledge.py）必需
