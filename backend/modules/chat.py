@@ -5,10 +5,28 @@ from typing import List, Dict, Optional, Generator
 from langchain_community.llms import Ollama
 from rich.console import Console
 from rich.markdown import Markdown
-from services.model_clients import chat_completion, stream_chat_completion, stream_chat_completion
+from services.model_clients import chat_with_tools, stream_chat_completion
+from modules.tools import run_tool, tool_schemas
 import config
 
 console = Console()
+
+
+def _forward_with_sink(generator, sink):
+    """转发流式增量并同时存进 sink，返回内层生成器的 return 值（工具调用）。
+
+    单用 `yield from` 会把增量直接交给调用方，sink 收不到，落库的回复就会是空的。
+    """
+    try:
+        while True:
+            try:
+                chunk = next(generator)
+            except StopIteration as stop:
+                return stop.value
+            sink.append(chunk)
+            yield chunk
+    finally:
+        generator.close()   # 前端点“停止生成”时，确保内层 HTTP 流被关掉
 
 
 class ChatManager:
@@ -114,44 +132,60 @@ class ChatManager:
         return full_response
 
     def chat_with_api(self, user_input: str, model_config: Dict, settings: Dict) -> str:
-        prompt = self.build_prompt(user_input)
-        if config.DEBUG_MODE:
-            console.print("\n[yellow]===== DEBUG: 完整Prompt =====[/yellow]")
-            console.print(prompt)
-            console.print("[yellow]===== DEBUG: Prompt结束 =====[/yellow]\n")
+        """非流式：直接消费流式实现，工具调用循环只维护一份"""
         try:
-            response = chat_completion(
-                model_config,
-                prompt,
-                temperature=settings["temperature"],
-                top_p=settings["topP"],
-                max_tokens=settings["maxTokens"],
-            )
-            if self.memory_system:
-                self.memory_system.add_message("user", user_input)
-                self.memory_system.add_message("assistant", response)
-                self.memory_system.check_and_summarize()
-                self.memory_system.auto_vectorize_memories()
-            return response
+            return "".join(self.stream_chat_with_api(user_input, model_config, settings))
         except Exception as error:
             error_message = f"对话出错: {str(error)}"
             console.print(f"[red]✗ {error_message}[/red]")
             return error_message
 
     def stream_chat_with_api(self, user_input: str, model_config: Dict, settings: Dict):
-        prompt = self.build_prompt(user_input)
+        messages = [{"role": "user", "content": self.build_prompt(user_input)}]
+        options = {
+            "temperature": settings["temperature"],
+            "top_p": settings["topP"],
+            "max_tokens": settings["maxTokens"],
+        }
         response_parts = []
         completed = False
         try:
-            for content in stream_chat_completion(
-                model_config,
-                prompt,
-                temperature=settings["temperature"],
-                top_p=settings["topP"],
-                max_tokens=settings["maxTokens"],
-            ):
-                response_parts.append(content)
-                yield content
+            # 第一轮真流式：没触发工具调用时（绝大多数消息），体验和接入工具前完全一致
+            tool_calls = yield from _forward_with_sink(
+                stream_chat_completion(model_config, messages, tools=tool_schemas(), **options),
+                response_parts,
+            )
+            if tool_calls:
+                messages.append({
+                    "role": "assistant",
+                    "content": "".join(response_parts).strip(),
+                    "tool_calls": tool_calls,
+                })
+
+            rounds = 0
+            while tool_calls and rounds < config.TOOL_CONFIG["max_rounds"]:
+                rounds += 1
+                for call in tool_calls:
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call["id"],
+                        "content": run_tool(call["function"]["name"], call["function"]["arguments"]),
+                    })
+                # 最后一轮不再给工具，逼模型把已有信息收口成文本，避免兜底时无话可说
+                last_round = rounds >= config.TOOL_CONFIG["max_rounds"]
+                message = chat_with_tools(
+                    model_config, messages,
+                    tools=None if last_round else tool_schemas(),
+                    **options,
+                )
+                messages.append(message)
+                # _assistant_message 在没有工具调用时不会带 tool_calls 字段
+                tool_calls = message.get("tool_calls") or []
+                if message["content"]:
+                    # 工具轮次之后的收口回复拿不到流式增量，一次性吐出
+                    response_parts.append(message["content"])
+                    yield message["content"]
+
             response = "".join(response_parts)
             if not response.strip():
                 raise ValueError("模型没有返回有效内容")
