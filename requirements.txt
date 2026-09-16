@@ -1,0 +1,15 @@
+# -*- coding: utf-8 -*-
+# Web 服务运行时依赖（uvicorn app:app）。命令行界面另见 requirements-cli.txt。
+langchain
+langchain-community
+langchain-text-splitters
+langchain-core
+langgraph
+chromadb
+openai
+httpx
+tiktoken
+rich
+requests
+fastapi
+uvicorn[standard]
