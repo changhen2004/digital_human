@@ -69,7 +69,7 @@ digital_human/
 │   │       ├── KnowledgeBase.vue      # 知识库管理界面
 │   │       ├── UserProfile.vue        # 用户画像管理界面
 │   │       └── AdminPanel.vue         # 后台管理面板
-│   └── dist/                  # 前端构建产物（已构建，可直接运行）
+│   └── dist/                  # 前端构建产物（本地构建生成，不入库）
 └── venv/                      # Python 虚拟环境
 ```
 
@@ -90,9 +90,7 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. 前端构建（可选，dist 已包含在项目中）
-
-如需修改前端代码后重新构建：
+### 2. 前端构建（dist 不提交，克隆后需执行一次）
 
 ```bash
 cd frontend
@@ -101,7 +99,7 @@ npm run build
 cd ..
 ```
 
-如果不修改前端，直接使用现有 dist 目录即可，不需要安装 Node.js。
+本地已有 dist 目录且不需要改前端时，可以跳过这一步，不安装 Node.js 也能运行。
 
 ### 3. 启动
 
