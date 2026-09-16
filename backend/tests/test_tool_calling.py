@@ -139,7 +139,7 @@ assert memory.summarized
 assert len(client.completions.requests) == 2, client.completions.requests
 first, second = client.completions.requests
 assert first["stream"] is True
-assert [item["function"]["name"] for item in first["tools"]] == ["get_system_time", "get_system_ip"], first["tools"]
+assert [item["function"]["name"] for item in first["tools"]] == ["get_system_time", "get_system_ip", "get_campus_talks"], first["tools"]
 assert [item["role"] for item in first["messages"]] == ["user"], first["messages"]
 
 tool_messages = [item for item in second["messages"] if item["role"] == "tool"]
