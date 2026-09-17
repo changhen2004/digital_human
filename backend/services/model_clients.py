@@ -35,25 +35,6 @@ def _as_messages(prompt):
     return prompt if isinstance(prompt, list) else [{"role": "user", "content": prompt}]
 
 
-def _assistant_message(message):
-    """转成可以直接 append 回 messages 的 assistant 字典。
-
-    只保留协议字段：多余字段有些 OpenAI 兼容网关会直接报 400。
-    """
-    payload = {"role": "assistant", "content": message.content or ""}
-    tool_calls = [
-        {
-            "id": call.id,
-            "type": "function",
-            "function": {"name": call.function.name, "arguments": call.function.arguments},
-        }
-        for call in (message.tool_calls or [])
-    ]
-    if tool_calls:
-        payload["tool_calls"] = tool_calls
-    return payload
-
-
 def chat_completion(model_config, prompt, temperature=None, top_p=None, max_tokens=None):
     client = create_openai_client(model_config)
     parameters = {"model": model_config["model"], "messages": _as_messages(prompt)}
@@ -63,26 +44,6 @@ def chat_completion(model_config, prompt, temperature=None, top_p=None, max_toke
     try:
         result = client.chat.completions.create(**parameters)
         return result.choices[0].message.content or ""
-    finally:
-        client.close()
-
-
-def chat_with_tools(model_config, messages, tools=None, temperature=None, top_p=None, max_tokens=None):
-    """非流式请求一轮，返回完整 assistant 消息（含 tool_calls）。
-
-    和 chat_completion 的区别：这里必须返回整个 message，只取 content 会丢掉工具调用请求。
-    """
-    client = create_openai_client(model_config)
-    parameters = {"model": model_config["model"], "messages": messages}
-    if tools: parameters["tools"] = tools
-    if temperature is not None: parameters["temperature"] = temperature
-    if top_p is not None: parameters["top_p"] = top_p
-    if max_tokens is not None: parameters["max_tokens"] = max_tokens
-    try:
-        result = client.chat.completions.create(**parameters)
-        return _assistant_message(result.choices[0].message)
-    except Exception as error:
-        raise ModelClientError("模型请求失败") from error
     finally:
         client.close()
 

@@ -78,10 +78,9 @@ def call(id_, name, arguments):
     return {"index": 0, "id": id_, "function": {"name": name, "arguments": arguments}}
 
 
-def completion(content, tool_calls=None):
-    """非流式返回：模拟官方 SDK 的对象形态（chat_with_tools 走属性访问）"""
-    message = types.SimpleNamespace(content=content, tool_calls=tool_calls)
-    return types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
+def text_stream(*pieces):
+    """每一轮都走流式，所以假响应也必须是流"""
+    return FakeStream([delta(content=piece) for piece in pieces])
 
 
 def drain(generator):
@@ -127,18 +126,19 @@ client = FakeClient([
         delta(tool_calls=[call("call_a", "get_system_time", "")]),
         delta(tool_calls=[{"index": 0, "function": {"arguments": "{}"}}]),
     ]),
-    completion("现在是 2026-09-16 17:50:00。"),
+    text_stream("现在是 ", "2026-09-16 17:50:00。"),
 ])
 model_clients.create_openai_client = lambda config: client
 memory = FakeMemory()
 parts, _ = drain(new_chat(memory).stream_chat_with_api("现在几点", MODEL_CONFIG, SETTINGS))
-assert parts == ["让我查一下。", "现在是 2026-09-16 17:50:00。"], parts
+assert parts == ["让我查一下。", "现在是 ", "2026-09-16 17:50:00。"], parts
 assert memory.messages == [("user", "现在几点"), ("assistant", "让我查一下。现在是 2026-09-16 17:50:00。")], memory.messages
 assert memory.summarized
 
 assert len(client.completions.requests) == 2, client.completions.requests
 first, second = client.completions.requests
 assert first["stream"] is True
+assert second["stream"] is True, "工具轮之后的收口回复也必须走流式，否则会整块弹出"
 assert [item["function"]["name"] for item in first["tools"]] == ["get_system_time", "get_system_ip", "get_campus_talks"], first["tools"]
 assert [item["role"] for item in first["messages"]] == ["user"], first["messages"]
 
@@ -169,7 +169,7 @@ print("4. chat_with_api 复用流式实现 ok")
 # 5. 工具执行失败（工具名不存在）只把错误文本回传，不能崩掉整轮对话
 client = FakeClient([
     FakeStream([delta(tool_calls=[call("call_b", "no_such_tool", "{}")])]),
-    completion("我没法调用那个工具。"),
+    text_stream("我没法调用那个工具。"),
 ])
 model_clients.create_openai_client = lambda config: client
 parts, _ = drain(new_chat().stream_chat_with_api("帮我做点什么", MODEL_CONFIG, SETTINGS))
@@ -180,12 +180,8 @@ print("5. 工具失败降级为文本回传 ok")
 
 # 6. 模型反复要工具时必须能收口：最后一轮不再提供 tools，强制它出文本
 client = FakeClient(
-    [FakeStream([delta(tool_calls=[call("call_c", "get_system_time", "{}")])])]
-    + [completion("", [types.SimpleNamespace(
-        id=f"call_{index}",
-        function=types.SimpleNamespace(name="get_system_time", arguments="{}"),
-    )]) for index in range(4)]
-    + [completion("收口答案。")]
+    [FakeStream([delta(tool_calls=[call(f"call_{index}", "get_system_time", "{}")])]) for index in range(5)]
+    + [text_stream("收口答案。")]
 )
 model_clients.create_openai_client = lambda config: client
 parts, _ = drain(new_chat().stream_chat_with_api("现在几点", MODEL_CONFIG, SETTINGS))

@@ -5,7 +5,7 @@ from typing import List, Dict, Optional, Generator
 from langchain_community.llms import Ollama
 from rich.console import Console
 from rich.markdown import Markdown
-from services.model_clients import chat_with_tools, stream_chat_completion
+from services.model_clients import stream_chat_completion
 from modules.tools import run_tool, tool_schemas
 import config
 
@@ -150,41 +150,32 @@ class ChatManager:
         response_parts = []
         completed = False
         try:
-            # 第一轮真流式：没触发工具调用时（绝大多数消息），体验和接入工具前完全一致
-            tool_calls = yield from _forward_with_sink(
-                stream_chat_completion(model_config, messages, tools=tool_schemas(), **options),
-                response_parts,
-            )
-            if tool_calls:
+            # 每一轮都走真流式：模型边吐字边决定要不要调工具，
+            # 工具轮之后的收口回复同样逐字返回，不会整块弹出。
+            for round_index in range(config.TOOL_CONFIG["max_rounds"] + 1):
+                started_at = len(response_parts)
+                last_round = round_index >= config.TOOL_CONFIG["max_rounds"]
+                tool_calls = yield from _forward_with_sink(
+                    stream_chat_completion(
+                        model_config, messages,
+                        tools=None if last_round else tool_schemas(),
+                        **options,
+                    ),
+                    response_parts,
+                )
+                if not tool_calls:
+                    break
                 messages.append({
                     "role": "assistant",
-                    "content": "".join(response_parts).strip(),
+                    "content": "".join(response_parts[started_at:]).strip(),
                     "tool_calls": tool_calls,
                 })
-
-            rounds = 0
-            while tool_calls and rounds < config.TOOL_CONFIG["max_rounds"]:
-                rounds += 1
                 for call in tool_calls:
                     messages.append({
                         "role": "tool",
                         "tool_call_id": call["id"],
                         "content": run_tool(call["function"]["name"], call["function"]["arguments"]),
                     })
-                # 最后一轮不再给工具，逼模型把已有信息收口成文本，避免兜底时无话可说
-                last_round = rounds >= config.TOOL_CONFIG["max_rounds"]
-                message = chat_with_tools(
-                    model_config, messages,
-                    tools=None if last_round else tool_schemas(),
-                    **options,
-                )
-                messages.append(message)
-                # _assistant_message 在没有工具调用时不会带 tool_calls 字段
-                tool_calls = message.get("tool_calls") or []
-                if message["content"]:
-                    # 工具轮次之后的收口回复拿不到流式增量，一次性吐出
-                    response_parts.append(message["content"])
-                    yield message["content"]
 
             response = "".join(response_parts)
             if not response.strip():
