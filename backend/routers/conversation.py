@@ -107,8 +107,8 @@ def create_conversation_router(
         def generate():
             stream = chat_manager.stream_chat_with_api(user_input, model_config, settings)
             try:
-                for content in stream:
-                    yield sse_event({"type": "delta", "content": content})
+                for event in stream:
+                    yield sse_event(event)
                 user_profile.trigger_auto_extraction(memory_system.db_path, memory_system.summary_model_config)
                 yield sse_event({"type": "done"})
             except GeneratorExit:

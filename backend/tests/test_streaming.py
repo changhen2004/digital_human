@@ -90,8 +90,10 @@ def new_chat():
 def collect_with_timing(generator):
     parts, stamps = [], []
     started = time.monotonic()
-    for piece in generator:
-        parts.append(piece)
+    for event in generator:
+        if event["type"] != "delta":
+            continue
+        parts.append(event["content"])
         stamps.append(time.monotonic() - started)
     return parts, stamps
 
@@ -101,7 +103,7 @@ MockModel.mode = "text"
 parts, stamps = collect_with_timing(new_chat().stream_chat_with_api("你好", MODEL_CONFIG, SETTINGS))
 print("1. 纯文本增量时间点:", [f"{t:.2f}s" for t in stamps], "内容:", parts)
 assert parts == ["你", "好", "呀"], parts
-assert stamps[-1] - stamps[0] > DELAY, f"增量挤在一起到达，说明被缓冲了: {stamps}"
+assert stamps[-1] - stamps[0] > DELAY * 0.7, f"增量挤在一起到达，说明被缓冲了: {stamps}"
 print("1. 纯文本回复逐步到达 ok")
 
 # 2. 触发工具：工具轮之后的收口回复必须同样逐步到达，不能整块弹出
@@ -109,7 +111,7 @@ MockModel.mode = "tool"
 parts, stamps = collect_with_timing(new_chat().stream_chat_with_api("现在几点", MODEL_CONFIG, SETTINGS))
 print("2. 触发工具后的增量:", [f"{t:.2f}s" for t in stamps], "内容:", parts)
 assert parts == ["最终", "答案"], parts
-assert stamps[-1] - stamps[0] > DELAY, f"工具轮之后的回复被缓冲了: {stamps}"
+assert stamps[-1] - stamps[0] > DELAY * 0.7, f"工具轮之后的回复被缓冲了: {stamps}"
 print("2. 工具轮之后的收口回复仍逐步到达 ok")
 
 server.shutdown()

@@ -84,13 +84,22 @@ def text_stream(*pieces):
 
 
 def drain(generator):
-    """驱动生成器，返回 (yield 出来的片段, 生成器的 return 值)"""
+    """驱动生成器，返回 (yield 出来的事件, 生成器的 return 值)"""
     parts = []
     while True:
         try:
             parts.append(next(generator))
         except StopIteration as stop:
             return parts, stop.value
+
+
+def texts(events):
+    """从事件流里取出文本增量"""
+    return [event["content"] for event in events if event["type"] == "delta"]
+
+
+def tool_names(events):
+    return [event["name"] for event in events if event["type"] == "tool"]
 
 
 def new_chat(memory=None):
@@ -131,7 +140,8 @@ client = FakeClient([
 model_clients.create_openai_client = lambda config: client
 memory = FakeMemory()
 parts, _ = drain(new_chat(memory).stream_chat_with_api("现在几点", MODEL_CONFIG, SETTINGS))
-assert parts == ["让我查一下。", "现在是 ", "2026-09-16 17:50:00。"], parts
+assert texts(parts) == ["让我查一下。", "现在是 ", "2026-09-16 17:50:00。"], parts
+assert tool_names(parts) == ["get_system_time"], "工具执行前必须先发 tool 事件，否则界面全程没有反馈"
 assert memory.messages == [("user", "现在几点"), ("assistant", "让我查一下。现在是 2026-09-16 17:50:00。")], memory.messages
 assert memory.summarized
 
@@ -155,7 +165,7 @@ client = FakeClient([FakeStream([delta(content="你好"), delta(content="呀")])
 model_clients.create_openai_client = lambda config: client
 memory = FakeMemory()
 parts, _ = drain(new_chat(memory).stream_chat_with_api("你好", MODEL_CONFIG, SETTINGS))
-assert parts == ["你好", "呀"], parts
+assert texts(parts) == ["你好", "呀"], parts
 assert len(client.completions.requests) == 1, client.completions.requests
 assert memory.messages == [("user", "你好"), ("assistant", "你好呀")], memory.messages
 print("3. 无工具调用时保持原有流式行为 ok")
@@ -173,7 +183,7 @@ client = FakeClient([
 ])
 model_clients.create_openai_client = lambda config: client
 parts, _ = drain(new_chat().stream_chat_with_api("帮我做点什么", MODEL_CONFIG, SETTINGS))
-assert parts == ["我没法调用那个工具。"], parts
+assert texts(parts) == ["我没法调用那个工具。"], parts
 tool_message = [item for item in client.completions.requests[1]["messages"] if item["role"] == "tool"][0]
 assert tool_message["content"].startswith("错误：不存在"), tool_message
 print("5. 工具失败降级为文本回传 ok")
@@ -185,7 +195,7 @@ client = FakeClient(
 )
 model_clients.create_openai_client = lambda config: client
 parts, _ = drain(new_chat().stream_chat_with_api("现在几点", MODEL_CONFIG, SETTINGS))
-assert parts == ["收口答案。"], parts
+assert texts(parts) == ["收口答案。"], parts
 requests = client.completions.requests
 assert len(requests) == 6, len(requests)
 assert "tools" in requests[-2], "倒数第二轮仍应提供工具"

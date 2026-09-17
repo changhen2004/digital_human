@@ -13,7 +13,7 @@ console = Console()
 
 
 def _forward_with_sink(generator, sink):
-    """转发流式增量并同时存进 sink，返回内层生成器的 return 值（工具调用）。
+    """转发流式增量（包成 delta 事件）并同时存进 sink，返回内层生成器的 return 值。
 
     单用 `yield from` 会把增量直接交给调用方，sink 收不到，落库的回复就会是空的。
     """
@@ -24,7 +24,7 @@ def _forward_with_sink(generator, sink):
             except StopIteration as stop:
                 return stop.value
             sink.append(chunk)
-            yield chunk
+            yield {"type": "delta", "content": chunk}
     finally:
         generator.close()   # 前端点“停止生成”时，确保内层 HTTP 流被关掉
 
@@ -134,13 +134,21 @@ class ChatManager:
     def chat_with_api(self, user_input: str, model_config: Dict, settings: Dict) -> str:
         """非流式：直接消费流式实现，工具调用循环只维护一份"""
         try:
-            return "".join(self.stream_chat_with_api(user_input, model_config, settings))
+            return "".join(
+                event["content"]
+                for event in self.stream_chat_with_api(user_input, model_config, settings)
+                if event["type"] == "delta"
+            )
         except Exception as error:
             error_message = f"对话出错: {str(error)}"
             console.print(f"[red]✗ {error_message}[/red]")
             return error_message
 
     def stream_chat_with_api(self, user_input: str, model_config: Dict, settings: Dict):
+        """产出事件字典：{"type": "delta", "content": ...} 或 {"type": "tool", "name": ...}
+
+        工具执行期间没有任何文本增量，靠 tool 事件让前端显示进度。
+        """
         messages = [{"role": "user", "content": self.build_prompt(user_input)}]
         options = {
             "temperature": settings["temperature"],
@@ -171,6 +179,8 @@ class ChatManager:
                     "tool_calls": tool_calls,
                 })
                 for call in tool_calls:
+                    # 先告诉前端要执行工具了，再执行；否则这段等待界面全黑
+                    yield {"type": "tool", "name": call["function"]["name"]}
                     messages.append({
                         "role": "tool",
                         "tool_call_id": call["id"],

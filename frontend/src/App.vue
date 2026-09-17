@@ -21,6 +21,10 @@ const historyNotice = ref('')
 const messages = ref([])
 const welcomeMessage = { role: 'assistant', content: '你好，我是智能数字人助手。你可以向我提问。', welcome: true }
 
+// 工具执行期间没有文本增量，用这个映射给用户一个可读的进度提示
+const TOOL_LABELS = { get_campus_talks: '校园宣讲会', get_system_time: '系统时间', get_system_ip: '公网 IP' }
+function toolLabel(name) { return TOOL_LABELS[name] || name }
+
 async function scrollToBottom() {
   await nextTick()
   if (messageList.value) messageList.value.scrollTop = messageList.value.scrollHeight
@@ -119,7 +123,11 @@ async function streamChat(userContent, temporaryMessage, currentGeneration) {
       for (const eventText of events) {
         const event = parseSseEvent(eventText)
         if (!event) continue
-        if (event.type === 'delta' && typeof event.content === 'string' && event.content) {
+        if (event.type === 'tool') {
+          temporaryMessage.toolName = event.name
+          await scrollToBottom()
+        } else if (event.type === 'delta' && typeof event.content === 'string' && event.content) {
+          temporaryMessage.toolName = ''
           temporaryMessage.content += event.content
           receivedContent = true
           animationState.value = 'speaking'
@@ -154,7 +162,7 @@ async function sendMessage() {
   const content = inputText.value.trim()
   if (!content || isLoading.value || isHistoryLoading.value) return
   messages.value.push({ role: 'user', content })
-  const temporaryMessage = { role: 'assistant', content: '', userContent: content, temporary: true }
+  const temporaryMessage = { role: 'assistant', content: '', userContent: content, temporary: true, toolName: '' }
   messages.value.push(temporaryMessage)
   inputText.value = ''
   isLoading.value = true
@@ -330,12 +338,10 @@ async function logout() {
           <div ref="messageList" class="message-list">
             <div v-if="isHistoryLoading" class="history-loading">正在加载聊天历史……</div>
             <template v-for="(message, index) in messages" :key="message.id || index">
-              <div v-if="!message.temporary" class="message-row" :class="message.role === 'user' ? 'user-row' : 'assistant-row'">
+              <div v-if="!message.temporary || message.content || message.toolName" class="message-row" :class="message.role === 'user' ? 'user-row' : 'assistant-row'">
                 <div class="message-column">
-                  <div class="message-bubble" :class="message.role === 'user' ? 'user-message' : 'assistant-message'">
-                    {{ message.content }}
-                  </div>
-                  <div v-if="message.role === 'assistant'" class="message-actions">
+                  <div class="message-bubble" :class="message.role === 'user' ? 'user-message' : 'assistant-message'">{{ message.content }}<span v-if="!message.content && message.toolName" class="tool-notice">正在查询{{ toolLabel(message.toolName) }}…</span></div>
+                  <div v-if="message.role === 'assistant' && !message.temporary" class="message-actions">
                     <button class="message-action" type="button" title="复制" aria-label="复制AI回复" @click="copyMessage(message.content)"><Copy /></button>
                     <button v-if="message.userContent && !message.temporary" class="message-action" type="button" title="重新生成" aria-label="重新生成AI回复" :disabled="isLoading" @click="regenerateMessage(message, index)"><RefreshCw /></button>
                     <button v-if="message.userContent && !message.temporary" class="message-action danger-action" type="button" title="删除" aria-label="删除本轮对话" :disabled="isLoading" @click="deleteTurn(message, index)"><Trash2 /></button>
