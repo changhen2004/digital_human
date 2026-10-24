@@ -103,12 +103,9 @@ def tool_names(events):
 
 
 def new_chat(memory=None):
-    chat = ChatManager.__new__(ChatManager)   # 绕开 __init__，避免真的去连 Ollama
-    chat.llm = None
-    chat.rag_system = None
-    chat.user_profile = None
-    chat.active_categories = []
-    chat.memory_system = memory
+    # 普通构造即可：构造器只保存服务，不再初始化本地 Ollama 客户端
+    chat = ChatManager(memory_system=memory)
+    assert not hasattr(chat, "llm"), "ChatManager 不应再初始化本地 Ollama 客户端"
     return chat
 
 

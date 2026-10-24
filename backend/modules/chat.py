@@ -1,10 +1,8 @@
 # modules/chat.py
 # 对话管理模块 - LLM调用、Prompt拼接、流式输出
 
-from typing import List, Dict, Optional, Generator
-from langchain_community.llms import Ollama
+from typing import List, Dict
 from rich.console import Console
-from rich.markdown import Markdown
 from services.model_clients import stream_chat_completion
 from modules.tools import run_tool, tool_schemas
 import config
@@ -33,13 +31,6 @@ class ChatManager:
     """对话管理器"""
 
     def __init__(self, rag_system=None, memory_system=None, user_profile=None):
-        self.llm = Ollama(
-            base_url=config.OLLAMA_BASE_URL,
-            model=config.OLLAMA_CHAT_MODEL,
-            temperature=config.LLM_CONFIG["temperature"],
-            top_p=config.LLM_CONFIG["top_p"],
-            num_predict=config.LLM_CONFIG["max_tokens"]
-        )
         self.rag_system = rag_system
         self.memory_system = memory_system
         self.user_profile = user_profile
@@ -99,37 +90,6 @@ class ChatManager:
         prompt_parts.append("AI:")
         return "\n".join(prompt_parts)
 
-    def chat(self, user_input: str, stream: bool = True) -> str:
-        prompt = self.build_prompt(user_input)
-        if config.DEBUG_MODE:
-            console.print("\n[yellow]===== DEBUG: 完整Prompt =====[/yellow]")
-            console.print(prompt)
-            console.print("[yellow]===== DEBUG: Prompt结束 =====[/yellow]\n")
-        try:
-            response = self._stream_response(prompt) if stream else self.llm.invoke(prompt)
-            if self.memory_system:
-                self.memory_system.add_message("user", user_input)
-                self.memory_system.add_message("assistant", response)
-                self.memory_system.check_and_summarize()
-                self.memory_system.auto_vectorize_memories()
-            return response
-        except Exception as error:
-            error_message = f"对话出错: {str(error)}"
-            console.print(f"[red]✗ {error_message}[/red]")
-            return error_message
-
-    def _stream_response(self, prompt: str) -> str:
-        console.print("\n[green]AI:[/green] ", end="")
-        full_response = ""
-        try:
-            for chunk in self.llm.stream(prompt):
-                console.print(chunk, end="", style="green")
-                full_response += chunk
-            console.print("\n")
-        except KeyboardInterrupt:
-            console.print("\n[yellow]⚠ 生成已中断[/yellow]")
-            full_response += " [已中断]"
-        return full_response
 
     def chat_with_api(self, user_input: str, model_config: Dict, settings: Dict) -> str:
         """非流式：直接消费流式实现，工具调用循环只维护一份"""
@@ -200,12 +160,6 @@ class ChatManager:
             if not completed:
                 response_parts.clear()
 
-    def simple_chat(self, user_input: str) -> str:
-        prompt = f"{config.SYSTEM_PROMPT}\n\n用户: {user_input}\nAI:"
-        try:
-            return self.llm.invoke(prompt)
-        except Exception as error:
-            return f"对话出错: {str(error)}"
 
     def show_config(self):
         from rich.table import Table
@@ -217,7 +171,7 @@ class ChatManager:
         table.add_row("Top P", str(config.LLM_CONFIG["top_p"]))
         table.add_row("最大Token", str(config.LLM_CONFIG["max_tokens"]))
         table.add_row("激活知识库", ", ".join([config.KNOWLEDGE_CATEGORIES.get(c, c) for c in self.active_categories]) if self.active_categories else "无")
-        console.print(table)
+        console.print(table)                    
 
 
 if __name__ == "__main__":

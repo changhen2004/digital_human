@@ -78,12 +78,9 @@ MODEL_CONFIG = {"baseUrl": f"http://127.0.0.1:{port}/v1", "apiKey": "x", "model"
 
 
 def new_chat():
-    chat = ChatManager.__new__(ChatManager)
-    chat.llm = None
-    chat.rag_system = None
-    chat.memory_system = None
-    chat.user_profile = None
-    chat.active_categories = []
+    # 走普通构造：构造器只保存服务、不发起模型请求，这里顺便验证没有残留的本地模型初始化
+    chat = ChatManager()
+    assert not hasattr(chat, "llm"), "ChatManager 不应再初始化本地 Ollama 客户端"
     return chat
 
 
