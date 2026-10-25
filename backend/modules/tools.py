@@ -6,6 +6,7 @@ import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
+from typing import Callable, NamedTuple
 
 import requests
 from langchain_core.tools import tool
@@ -105,15 +106,35 @@ def get_campus_talks() -> str:
     return "\n".join(f"{day.isoformat()}（{label}）{text}" for (day, label), text in zip(days, texts))
 
 
-ALL_TOOLS = [get_system_time, get_system_ip, get_campus_talks]
-_TOOLS_BY_NAME = {item.name: item for item in ALL_TOOLS}
+class _RegisteredTool(NamedTuple):
+    """一条注册记录：模型定义和执行函数放在一起"""
+
+    definition: dict
+    invoke: Callable
+
+    @property
+    def name(self) -> str:
+        return self.definition["function"]["name"]
+
+
+def _register(function) -> _RegisteredTool:
+    return _RegisteredTool(definition=convert_to_openai_tool(function), invoke=function.invoke)
+
+
+# 静态注册表：不做自动发现或插件加载，新增工具时在这里显式登记；顺序即暴露给模型的顺序。
+_TOOL_REGISTRY = (
+    _register(get_system_time),
+    _register(get_system_ip),
+    _register(get_campus_talks),
+)
+_TOOLS_BY_NAME = {item.name: item.invoke for item in _TOOL_REGISTRY}
 
 
 # ==================== 对外接口 ====================
 
 def tool_schemas() -> list:
     """转成 OpenAI 兼容接口的 tools 参数"""
-    return [convert_to_openai_tool(item) for item in ALL_TOOLS]
+    return [item.definition for item in _TOOL_REGISTRY]
 
 
 def run_tool(name: str, arguments_json: str) -> str:
@@ -129,7 +150,7 @@ def run_tool(name: str, arguments_json: str) -> str:
     except json.JSONDecodeError:
         return f"错误：工具 {name} 的参数不是合法 JSON：{arguments_json}"
     try:
-        return str(selected.invoke(arguments))
+        return str(selected(arguments))
     except Exception as error:
         return f"工具 {name} 执行失败：{type(error).__name__}: {error}"
 
