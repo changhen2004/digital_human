@@ -4,6 +4,7 @@ import { Copy, LogOut, Menu, RefreshCw, Send, Settings, Trash2 } from 'lucide-vu
 import AdminPanel from './components/AdminPanel.vue'
 import AuthPage from './components/AuthPage.vue'
 import ChatSettingsDrawer from './components/ChatSettingsDrawer.vue'
+import { requestJson } from './lib/request.js'
 
 const currentUser = ref(null)
 const currentPage = ref('chat')
@@ -28,15 +29,6 @@ function toolLabel(name) { return TOOL_LABELS[name] || name }
 async function scrollToBottom() {
   await nextTick()
   if (messageList.value) messageList.value.scrollTop = messageList.value.scrollHeight
-}
-
-async function requestJson(url, options = {}) {
-  let response
-  try { response = await fetch(url, options) } catch (error) { throw new Error('无法连接后端，请确认Python服务已经启动') }
-  let data = {}
-  try { data = await response.json() } catch (error) { data = {} }
-  if (!response.ok) throw new Error(data.error || '请求失败，请稍后重试')
-  return data
 }
 
 async function loadChatHistory() {

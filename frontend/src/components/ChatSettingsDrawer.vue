@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { Trash2 } from 'lucide-vue-next'
+import { requestJson } from '../lib/request.js'
 
 const emit = defineEmits(['close', 'chat-cleared'])
 const platforms = ref([])
@@ -29,15 +30,6 @@ const availableModels = computed(() => {
   }
   return models
 })
-
-async function requestJson(url, options = {}) {
-  let response
-  try { response = await fetch(url, options) } catch (error) { throw new Error('无法连接后端，请确认Python服务已经启动') }
-  let data = {}
-  try { data = await response.json() } catch (error) { data = {} }
-  if (!response.ok) throw new Error(data.error || '请求失败，请稍后重试')
-  return data
-}
 
 async function loadSettings() {
   isLoading.value = true

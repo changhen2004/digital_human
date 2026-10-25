@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { requestJson } from '../lib/request.js'
 
 const categories = ref([])
 const selectedId = ref('')
@@ -11,25 +12,6 @@ const notice = ref('')
 const noticeType = ref('success')
 
 const selectedCategory = computed(() => categories.value.find((item) => item.id === selectedId.value) || null)
-
-async function requestApi(url, options = {}) {
-  let response
-  try {
-    response = await fetch(url, options)
-  } catch (error) {
-    throw new Error('无法连接后端，请确认Python服务已经启动')
-  }
-  let data = {}
-  try {
-    data = await response.json()
-  } catch (error) {
-    data = {}
-  }
-  if (!response.ok) {
-    throw new Error(data.error || '请求失败，请稍后重试')
-  }
-  return data
-}
 
 function showNotice(message, type = 'success') {
   notice.value = message
@@ -49,7 +31,7 @@ function validateCategoryName(name) {
 async function loadCategories(preferredId = '') {
   isLoading.value = true
   try {
-    const data = await requestApi('/api/knowledge-bases')
+    const data = await requestJson('/api/knowledge-bases')
     categories.value = Array.isArray(data.categories) ? data.categories : []
     const nextId = preferredId || selectedId.value
     selectedId.value = categories.value.some((item) => item.id === nextId) ? nextId : categories.value[0]?.id || ''
@@ -70,7 +52,7 @@ async function createCategory() {
   if (isWorking.value) return
   isWorking.value = true
   try {
-    const data = await requestApi('/api/knowledge-bases', {
+    const data = await requestJson('/api/knowledge-bases', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
@@ -111,7 +93,7 @@ async function uploadTxt(event) {
   const formData = new FormData()
   formData.append('file', uploadFile.value)
   try {
-    const data = await requestApi(`/api/knowledge-bases/${encodeURIComponent(selectedId.value)}/files`, {
+    const data = await requestJson(`/api/knowledge-bases/${encodeURIComponent(selectedId.value)}/files`, {
       method: 'POST',
       body: formData,
     })
@@ -130,7 +112,7 @@ async function rebuildIndex() {
   if (!selectedCategory.value || isWorking.value) return
   isWorking.value = true
   try {
-    const data = await requestApi(`/api/knowledge-bases/${encodeURIComponent(selectedId.value)}/rebuild`, { method: 'POST' })
+    const data = await requestJson(`/api/knowledge-bases/${encodeURIComponent(selectedId.value)}/rebuild`, { method: 'POST' })
     await loadCategories(selectedId.value)
     showNotice(data.message)
   } catch (error) {
@@ -144,7 +126,7 @@ async function deleteFile(filename) {
   if (!confirm(`确定删除“${filename}”吗？`)) return
   isWorking.value = true
   try {
-    const data = await requestApi(`/api/knowledge-bases/${encodeURIComponent(selectedId.value)}/files/${encodeURIComponent(filename)}`, { method: 'DELETE' })
+    const data = await requestJson(`/api/knowledge-bases/${encodeURIComponent(selectedId.value)}/files/${encodeURIComponent(filename)}`, { method: 'DELETE' })
     await loadCategories(selectedId.value)
     showNotice(data.message)
   } catch (error) {
@@ -159,7 +141,7 @@ async function deleteCategory() {
   if (!category || !confirm(`确定删除知识库分类“${category.name}”及其中全部TXT文件吗？`)) return
   isWorking.value = true
   try {
-    const data = await requestApi(`/api/knowledge-bases/${encodeURIComponent(category.id)}`, { method: 'DELETE' })
+    const data = await requestJson(`/api/knowledge-bases/${encodeURIComponent(category.id)}`, { method: 'DELETE' })
     selectedId.value = ''
     await loadCategories()
     showNotice(data.message)

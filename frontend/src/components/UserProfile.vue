@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { Lock, Pencil, Trash2, Unlock } from 'lucide-vue-next'
+import { requestJson } from '../lib/request.js'
 
 const categoryLabels = { basic: '基础信息', preference: '偏好', interest: '兴趣', habit: '习惯', other: '其他' }
 const profile = ref({ entries: [], autoExtractionEnabled: true, extractionInterval: 5 })
@@ -17,27 +18,19 @@ const formConfidence = ref(1)
 const formLocked = ref(false)
 const groupedEntries = computed(() => Object.keys(categoryLabels).map((category) => ({ category, label: categoryLabels[category], entries: profile.value.entries.filter((entry) => entry.category === category) })))
 
-async function requestApi(url, options = {}) {
-  let response
-  try { response = await fetch(url, options) } catch (error) { throw new Error('无法连接后端，请确认Python服务已经启动') }
-  let data = {}
-  try { data = await response.json() } catch (error) { data = {} }
-  if (!response.ok) throw new Error(data.error || '请求失败，请稍后重试')
-  return data
-}
 function showNotice(message, type = 'success') { notice.value = message; noticeType.value = type }
-async function loadProfile() { isLoading.value = true; try { profile.value = await requestApi('/api/user-profile') } catch (error) { showNotice(error.message, 'error') } finally { isLoading.value = false } }
+async function loadProfile() { isLoading.value = true; try { profile.value = await requestJson('/api/user-profile') } catch (error) { showNotice(error.message, 'error') } finally { isLoading.value = false } }
 async function saveSettings() {
   isWorking.value = true
   try {
-    profile.value = await requestApi('/api/user-profile/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ autoExtractionEnabled: profile.value.autoExtractionEnabled, extractionInterval: Number(profile.value.extractionInterval) }) })
+    profile.value = await requestJson('/api/user-profile/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ autoExtractionEnabled: profile.value.autoExtractionEnabled, extractionInterval: Number(profile.value.extractionInterval) }) })
     showNotice('自动提取设置已保存')
   } catch (error) { showNotice(error.message, 'error'); await loadProfile() } finally { isWorking.value = false }
 }
 async function extractNow() {
   isWorking.value = true
   try {
-    const data = await requestApi('/api/user-profile/extract', { method: 'POST' })
+    const data = await requestJson('/api/user-profile/extract', { method: 'POST' })
     await loadProfile()
     showNotice(data.message)
   } catch (error) { showNotice(error.message, 'error') } finally { isWorking.value = false }
@@ -49,7 +42,7 @@ async function saveEntry() {
   isWorking.value = true
   try {
     const body = JSON.stringify({ category: formCategory.value, content: formContent.value.trim(), source: formSource.value.trim() || '用户手动添加', confidence: Number(formConfidence.value), locked: formLocked.value })
-    await requestApi(editingId.value ? `/api/user-profile/entries/${editingId.value}` : '/api/user-profile/entries', { method: editingId.value ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body })
+    await requestJson(editingId.value ? `/api/user-profile/entries/${editingId.value}` : '/api/user-profile/entries', { method: editingId.value ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body })
     showForm.value = false
     await loadProfile()
     showNotice(editingId.value ? '用户信息已更新' : '用户信息已添加')
@@ -57,12 +50,12 @@ async function saveEntry() {
 }
 async function toggleLock(entry) {
   isWorking.value = true
-  try { await requestApi(`/api/user-profile/entries/${entry.id}/lock`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locked: !entry.locked }) }); await loadProfile(); showNotice(entry.locked ? '已解锁' : '已锁定') } catch (error) { showNotice(error.message, 'error') } finally { isWorking.value = false }
+  try { await requestJson(`/api/user-profile/entries/${entry.id}/lock`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locked: !entry.locked }) }); await loadProfile(); showNotice(entry.locked ? '已解锁' : '已锁定') } catch (error) { showNotice(error.message, 'error') } finally { isWorking.value = false }
 }
 async function deleteEntry(entry) {
   if (!confirm(`确定删除“${entry.content}”吗？`)) return
   isWorking.value = true
-  try { await requestApi(`/api/user-profile/entries/${entry.id}`, { method: 'DELETE' }); profile.value.entries = profile.value.entries.filter((item) => item.id !== entry.id); showNotice('用户信息已删除') } catch (error) { showNotice(error.message, 'error') } finally { isWorking.value = false }
+  try { await requestJson(`/api/user-profile/entries/${entry.id}`, { method: 'DELETE' }); profile.value.entries = profile.value.entries.filter((item) => item.id !== entry.id); showNotice('用户信息已删除') } catch (error) { showNotice(error.message, 'error') } finally { isWorking.value = false }
 }
 function formatTime(value) { return value ? new Date(value).toLocaleString() : '' }
 onMounted(loadProfile)

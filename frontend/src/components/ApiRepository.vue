@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { requestJson } from '../lib/request.js'
 
 const platforms = ref([])
 const selectedPlatformId = ref('')
@@ -37,35 +38,12 @@ function showNotice(message, type = 'success') {
   }
 }
 
-async function requestApi(url, options = {}) {
-  let response
-
-  try {
-    response = await fetch(url, options)
-  } catch (error) {
-    throw new Error('无法连接后端，请确认Python服务已经启动')
-  }
-
-  let data = {}
-  try {
-    data = await response.json()
-  } catch (error) {
-    data = {}
-  }
-
-  if (!response.ok) {
-    throw new Error(data.error || '请求失败，请稍后重试')
-  }
-
-  return data
-}
-
 async function loadPlatforms(preferredId = '') {
   isLoading.value = true
   loadError.value = ''
 
   try {
-    const data = await requestApi('/api/platforms')
+    const data = await requestJson('/api/platforms')
     platforms.value = Array.isArray(data.platforms) ? data.platforms : []
     const nextId = preferredId || selectedPlatformId.value
     selectedPlatformId.value = platforms.value.some((item) => item.id === nextId)
@@ -126,7 +104,7 @@ async function savePlatform() {
   try {
     const isCreate = formMode.value === 'create'
     const url = isCreate ? '/api/platforms' : `/api/platforms/${selectedPlatformId.value}`
-    const data = await requestApi(url, {
+    const data = await requestJson(url, {
       method: isCreate ? 'POST' : 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -149,7 +127,7 @@ async function deletePlatform() {
   }
 
   try {
-    await requestApi(`/api/platforms/${platform.id}`, { method: 'DELETE' })
+    await requestJson(`/api/platforms/${platform.id}`, { method: 'DELETE' })
     selectedPlatformId.value = ''
     await loadPlatforms()
     showNotice('平台已删除')
@@ -165,7 +143,7 @@ async function testConnection() {
 
   isTesting.value = true
   try {
-    const data = await requestApi(`/api/platforms/${selectedPlatform.value.id}/test`, {
+    const data = await requestJson(`/api/platforms/${selectedPlatform.value.id}/test`, {
       method: 'POST',
     })
     showNotice(data.message || '连接成功')
@@ -183,7 +161,7 @@ async function fetchModels() {
 
   isFetchingModels.value = true
   try {
-    const data = await requestApi(`/api/platforms/${selectedPlatform.value.id}/fetch-models`, {
+    const data = await requestJson(`/api/platforms/${selectedPlatform.value.id}/fetch-models`, {
       method: 'POST',
     })
     const count = Array.isArray(data.models) ? data.models.length : 0
@@ -204,7 +182,7 @@ async function addModel() {
 
   isAddingModel.value = true
   try {
-    await requestApi(`/api/platforms/${selectedPlatform.value.id}/models`, {
+    await requestJson(`/api/platforms/${selectedPlatform.value.id}/models`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
@@ -222,7 +200,7 @@ async function addModel() {
 async function updateModel(model, changes) {
   busyModelId.value = model.id
   try {
-    await requestApi(`/api/platforms/${selectedPlatform.value.id}/models/${model.id}`, {
+    await requestJson(`/api/platforms/${selectedPlatform.value.id}/models/${model.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(changes),
@@ -260,7 +238,7 @@ async function deleteModel(model) {
 
   busyModelId.value = model.id
   try {
-    await requestApi(`/api/platforms/${selectedPlatform.value.id}/models/${model.id}`, {
+    await requestJson(`/api/platforms/${selectedPlatform.value.id}/models/${model.id}`, {
       method: 'DELETE',
     })
     await loadPlatforms(selectedPlatformId.value)
