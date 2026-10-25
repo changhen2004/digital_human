@@ -17,6 +17,35 @@ def sse_event(payload: dict) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+class ChatPreparationError(Exception):
+    """消息或模型选择不满足时的可预期错误，由各路由映射成自己的响应"""
+
+
+def prepare_chat(data, api_repository, chat_settings, chat_manager, rag_system):
+    """校验消息，并准备好本轮对话的设置、模型配置和知识库分类。
+
+    返回 (user_input, settings, model_config)。设置文件和 API 仓库的读取错误
+    原样上抛，由两个路由各自保持原有的状态码差异。
+    """
+    message = data.get("message")
+    if not isinstance(message, str):
+        raise ChatPreparationError("message必须是字符串")
+    user_input = message.strip()
+    if not user_input:
+        raise ChatPreparationError("消息不能为空")
+
+    settings = chat_settings.get()
+    if not settings["platformId"] or not settings["modelId"]:
+        raise ChatPreparationError("请先在对话设置中选择模型")
+
+    available_categories = set(rag_system.get_all_categories())
+    chat_manager.set_active_categories([
+        item for item in settings.get("activeCategories", []) if item in available_categories
+    ])
+    model_config = api_repository.get_model_config(settings["platformId"], settings["modelId"])
+    return user_input, settings, model_config
+
+
 def create_conversation_router(
     api_repository: ApiRepository,
     chat_settings: ChatSettings,
@@ -69,38 +98,29 @@ def create_conversation_router(
 
     @router.post("/api/chat")
     def chat(data: dict = Body()):
-        if not isinstance(data.get("message"), str):
-            return JSONResponse({"error": "message必须是字符串"}, status_code=400)
-        user_input = data["message"].strip()
-        if not user_input:
-            return JSONResponse({"error": "消息不能为空"}, status_code=400)
         try:
-            settings = chat_settings.get()
-            if not settings["platformId"] or not settings["modelId"]:
-                return JSONResponse({"error": "请先在对话设置中选择模型"}, status_code=400)
-            chat_manager.set_active_categories([item for item in settings.get("activeCategories", []) if item in set(rag_system.get_all_categories())])
-            response = chat_manager.chat_with_api(user_input, api_repository.get_model_config(settings["platformId"], settings["modelId"]), settings)
+            user_input, settings, model_config = prepare_chat(
+                data, api_repository, chat_settings, chat_manager, rag_system
+            )
+            response = chat_manager.chat_with_api(user_input, model_config, settings)
             if response.startswith("对话出错:"):
                 return JSONResponse({"error": "生成回复失败"}, status_code=500)
             user_profile.trigger_auto_extraction(memory_system.db_path, memory_system.summary_model_config)
             return {"reply": response}
+        except ChatPreparationError as error:
+            return JSONResponse({"error": str(error)}, status_code=400)
         except Exception as error:
             print(f"生成回复失败: {type(error).__name__}")
             return JSONResponse({"error": "生成回复失败"}, status_code=500)
 
     @router.post("/api/chat/stream")
     def chat_stream(data: dict = Body()):
-        if not isinstance(data.get("message"), str):
-            return JSONResponse({"error": "message必须是字符串"}, status_code=400)
-        user_input = data["message"].strip()
-        if not user_input:
-            return JSONResponse({"error": "消息不能为空"}, status_code=400)
         try:
-            settings = chat_settings.get()
-            if not settings["platformId"] or not settings["modelId"]:
-                return JSONResponse({"error": "请先在对话设置中选择模型"}, status_code=400)
-            chat_manager.set_active_categories([item for item in settings.get("activeCategories", []) if item in set(rag_system.get_all_categories())])
-            model_config = api_repository.get_model_config(settings["platformId"], settings["modelId"])
+            user_input, settings, model_config = prepare_chat(
+                data, api_repository, chat_settings, chat_manager, rag_system
+            )
+        except ChatPreparationError as error:
+            return JSONResponse({"error": str(error)}, status_code=400)
         except (ApiRepositoryError, ChatSettingsError):
             return JSONResponse({"error": "请先在对话设置中选择模型"}, status_code=400)
 
