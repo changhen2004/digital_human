@@ -11,7 +11,6 @@ USERS_DIR = os.path.join(DATA_DIR, "users")
 KNOWLEDGE_BASE_DIR = os.path.join(DATA_DIR, "knowledge_base")
 CHROMA_DB_DIR = os.path.join(DATA_DIR, "chroma_db")
 MEMORY_DB_PATH = os.path.join(DATA_DIR, "memories.db")
-CHAT_HISTORY_PATH = os.path.join(DATA_DIR, "chat_history.json")
 
 # 确保数据目录存在
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -20,15 +19,8 @@ os.makedirs(KNOWLEDGE_BASE_DIR, exist_ok=True)
 os.makedirs(CHROMA_DB_DIR, exist_ok=True)
 
 # ==================== API配置 ====================
-# Ollama本地服务配置
-OLLAMA_BASE_URL = "http://localhost:11434"
+# 仅用于 show_config 诊断展示；对话模型来自用户配置的 API 平台
 OLLAMA_CHAT_MODEL = "qwen2.5:7b"
-OLLAMA_EMBED_MODEL = "nomic-embed-text"
-
-# 硅基流动API配置（语音识别STT）
-SILICONFLOW_API_KEY = os.environ  # 替换成真实的Key
-SILICONFLOW_STT_URL = "https://api.siliconflow.cn/v1/audio/transcriptions"
-SILICONFLOW_STT_MODEL = "FunAudioLLM/SenseVoiceSmall"
 
 # ==================== 模型参数配置 ====================
 # LLM对话参数
@@ -63,22 +55,6 @@ TOOL_CONFIG = {
     "max_rounds": 5,           # 单条消息内最多执行几轮工具调用，防止模型反复调用同一个工具
 }
 
-# ==================== 语音配置 ====================
-# TTS语音合成配置（edge-tts）
-TTS_CONFIG = {
-    "voice": "zh-CN-XiaoxiaoNeural",  # 微软晓晓音色（女声）
-    "rate": "+0%",                     # 语速：-50%到+100%
-    "volume": "+0%",                   # 音量：-50%到+100%
-}
-
-# STT语音识别配置
-STT_CONFIG = {
-    "sample_rate": 16000,      # 采样率
-    "channels": 1,             # 单声道
-    "format": "wav",           # 音频格式
-    "max_duration": 30,        # 最大录音时长（秒）
-}
-
 # ==================== 系统提示词 ====================
 SYSTEM_PROMPT = """你是一个智能数字人助手，可以结合知识库、长期记忆和用户信息提供帮助。
 
@@ -92,15 +68,6 @@ KNOWLEDGE_CATEGORIES = {
     "medical": "医疗健康",
     "legal": "法律常识",
     "campus": "校园助手"
-}
-
-# ==================== 终端显示配置 ====================
-TERMINAL_CONFIG = {
-    "user_color": "cyan",      # 用户消息颜色
-    "ai_color": "green",       # AI消息颜色
-    "system_color": "yellow",  # 系统提示颜色
-    "error_color": "red",      # 错误提示颜色
-    "width": 80,               # 终端显示宽度
 }
 
 # ==================== 调试模式 ====================
