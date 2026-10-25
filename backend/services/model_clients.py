@@ -49,10 +49,14 @@ def chat_completion(model_config, prompt, temperature=None, top_p=None, max_toke
 
 
 def stream_chat_completion(model_config, prompt, tools=None, temperature=None, top_p=None, max_tokens=None):
-    """流式请求：逐段 yield 文本增量，结束时 return 累积到的 tool_calls。
+    """流式请求：把上游增量翻译成内部事件流。
 
-    调用方用 `tool_calls = yield from stream_chat_completion(...)`，既能原样转发文本增量，
-    又能拿到模型请求的工具调用。
+    产出三种事件，调用方按 type 分支处理，不再依赖生成器的 return 值：
+      {"type": "text_delta", "content": ...}  文本增量，保持上游顺序，不整轮缓冲
+      {"type": "tool_call", "call": ...}      分片按 index 合并后的完整调用，位于文本之后
+      {"type": "model_end"}                   单次上游请求正常结束；不代表整轮聊天成功
+
+    失败仍以异常传播；提前关闭生成器时，finally 依次关闭上游响应和客户端。
     """
     client = create_openai_client(model_config)
     parameters = {"model": model_config["model"], "messages": _as_messages(prompt), "stream": True}
@@ -71,7 +75,7 @@ def stream_chat_completion(model_config, prompt, tools=None, temperature=None, t
             if not delta: continue
             content = _field(delta, "content")
             if isinstance(content, str) and content:
-                yield content
+                yield {"type": "text_delta", "content": content}
             for call in _field(delta, "tool_calls") or []:
                 # 流式工具调用按 index 分片到达：id 和 name 一次性给出，arguments 逐段拼接
                 slot = tool_calls.setdefault(
@@ -86,13 +90,16 @@ def stream_chat_completion(model_config, prompt, tools=None, temperature=None, t
                     if name: slot["function"]["name"] += name
                     arguments = _field(function, "arguments")
                     if arguments: slot["function"]["arguments"] += arguments
+        # 索引只在流结束后才能确定不再收到分片，此时统一发出完整调用
+        for index in sorted(tool_calls):
+            yield {"type": "tool_call", "call": tool_calls[index]}
+        yield {"type": "model_end"}
     except Exception as error:
         raise ModelClientError("模型流式请求失败") from error
     finally:
         if stream is not None and hasattr(stream, "close"):
             stream.close()
         client.close()
-    return [tool_calls[index] for index in sorted(tool_calls)]
 
 
 class OpenAIEmbeddingsAdapter:

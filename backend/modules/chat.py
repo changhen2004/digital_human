@@ -10,23 +10,6 @@ import config
 console = Console()
 
 
-def _forward_with_sink(generator, sink):
-    """转发流式增量（包成 delta 事件）并同时存进 sink，返回内层生成器的 return 值。
-
-    单用 `yield from` 会把增量直接交给调用方，sink 收不到，落库的回复就会是空的。
-    """
-    try:
-        while True:
-            try:
-                chunk = next(generator)
-            except StopIteration as stop:
-                return stop.value
-            sink.append(chunk)
-            yield {"type": "delta", "content": chunk}
-    finally:
-        generator.close()   # 前端点“停止生成”时，确保内层 HTTP 流被关掉
-
-
 class ChatManager:
     """对话管理器"""
 
@@ -123,14 +106,22 @@ class ChatManager:
             for round_index in range(config.TOOL_CONFIG["max_rounds"] + 1):
                 started_at = len(response_parts)
                 last_round = round_index >= config.TOOL_CONFIG["max_rounds"]
-                tool_calls = yield from _forward_with_sink(
-                    stream_chat_completion(
-                        model_config, messages,
-                        tools=None if last_round else tool_schemas(),
-                        **options,
-                    ),
-                    response_parts,
+                tool_calls = []
+                stream = stream_chat_completion(
+                    model_config, messages,
+                    tools=None if last_round else tool_schemas(),
+                    **options,
                 )
+                try:
+                    for event in stream:
+                        if event["type"] == "text_delta":
+                            response_parts.append(event["content"])
+                            yield {"type": "delta", "content": event["content"]}
+                        elif event["type"] == "tool_call":
+                            tool_calls.append(event["call"])
+                        # model_end 只表示这一次上游请求结束，聊天是否成功由下面的完整性判断决定
+                finally:
+                    stream.close()   # 前端点“停止生成”时，确保内层 HTTP 流和客户端被关掉
                 if not tool_calls:
                     break
                 messages.append({

@@ -49,6 +49,20 @@ class FakeClient:
         self.closed = True
 
 
+class ExplodingStream:
+    """迭代到一半抛错，用来验证错误传播和资源释放"""
+
+    def __init__(self):
+        self.closed = False
+
+    def __iter__(self):
+        yield delta(content="半截回答")
+        raise RuntimeError("模拟上游中断")
+
+    def close(self):
+        self.closed = True
+
+
 class FakeMemory:
     def __init__(self):
         self.messages = []
@@ -74,8 +88,8 @@ def delta(**values):
     return {"choices": [{"delta": values}]}
 
 
-def call(id_, name, arguments):
-    return {"index": 0, "id": id_, "function": {"name": name, "arguments": arguments}}
+def call(id_, name, arguments, index=0):
+    return {"index": index, "id": id_, "function": {"name": name, "arguments": arguments}}
 
 
 def text_stream(*pieces):
@@ -109,21 +123,95 @@ def new_chat(memory=None):
     return chat
 
 
-# 1. 流式工具调用：arguments 是分片到达的，必须拼成完整 JSON
+# 1. 内部事件契约：文本增量按序到达，工具调用分片合并后以事件输出，最后是 model_end
 model_clients.create_openai_client = lambda config: FakeClient([FakeStream([
     delta(content="让我查一下。"),
     delta(tool_calls=[call("call_a", "get_system_time", "")]),
     delta(tool_calls=[{"index": 0, "function": {"arguments": '{"unused"'}}]),
     delta(tool_calls=[{"index": 0, "function": {"arguments": ": 1}"}}]),
 ])])
-parts, tool_calls = drain(model_clients.stream_chat_completion(MODEL_CONFIG, "现在几点"))
-assert parts == ["让我查一下。"], parts
-assert tool_calls == [{
-    "id": "call_a",
-    "type": "function",
-    "function": {"name": "get_system_time", "arguments": '{"unused": 1}'},
-}], tool_calls
-print("1. 流式工具调用分片拼接 ok")
+events = list(model_clients.stream_chat_completion(MODEL_CONFIG, "现在几点"))
+assert events == [
+    {"type": "text_delta", "content": "让我查一下。"},
+    {"type": "tool_call", "call": {
+        "id": "call_a",
+        "type": "function",
+        "function": {"name": "get_system_time", "arguments": '{"unused": 1}'},
+    }},
+    {"type": "model_end"},
+], events
+print("1. 内部事件契约与工具分片拼接 ok")
+
+# 1b. 多工具分片交错：按各自 index 合并，输出按 index 排序
+upstream = FakeStream([
+    delta(tool_calls=[call("call_a", "get_system_time", "", index=0)]),
+    delta(tool_calls=[call("call_b", "get_system_ip", "", index=1)]),
+    delta(tool_calls=[{"index": 1, "function": {"arguments": "{}"}}]),
+    delta(tool_calls=[{"index": 0, "function": {"arguments": "{}"}}]),
+])
+model_clients.create_openai_client = lambda config: FakeClient([upstream])
+tool_events = [
+    event["call"] for event in model_clients.stream_chat_completion(MODEL_CONFIG, "查一下")
+    if event["type"] == "tool_call"
+]
+assert tool_events == [
+    {"id": "call_a", "type": "function", "function": {"name": "get_system_time", "arguments": "{}"}},
+    {"id": "call_b", "type": "function", "function": {"name": "get_system_ip", "arguments": "{}"}},
+], tool_events
+print("1b. 多工具交错分片按 index 合并 ok")
+
+# 1c. 提前关闭事件流：上游模型响应与客户端都必须释放
+upstream = FakeStream([delta(content="第一段"), delta(content="第二段")])
+client = FakeClient([upstream])
+model_clients.create_openai_client = lambda config: client
+stream = model_clients.stream_chat_completion(MODEL_CONFIG, "你好")
+assert next(stream) == {"type": "text_delta", "content": "第一段"}
+stream.close()
+assert upstream.closed, "提前停止时必须关闭上游模型响应"
+assert client.closed, "提前停止时必须关闭 SDK 客户端"
+print("1c. 提前关闭事件流释放资源 ok")
+
+# 1d. 上游中途失败：转成 ModelClientError，保留异常链并释放资源
+upstream = ExplodingStream()
+client = FakeClient([upstream])
+model_clients.create_openai_client = lambda config: client
+received = []
+try:
+    for event in model_clients.stream_chat_completion(MODEL_CONFIG, "你好"):
+        received.append(event)
+except model_clients.ModelClientError as error:
+    assert isinstance(error.__cause__, RuntimeError), error
+else:
+    raise AssertionError("上游中断必须转成 ModelClientError")
+assert received == [{"type": "text_delta", "content": "半截回答"}], received
+assert upstream.closed and client.closed, "失败时也必须释放上游响应和客户端"
+print("1d. 上游中断可观察且资源释放 ok")
+
+# 1e. 聊天层：中途失败不保存半条问答
+upstream = ExplodingStream()
+model_clients.create_openai_client = lambda config: FakeClient([upstream])
+memory = FakeMemory()
+received = []
+try:
+    for event in new_chat(memory).stream_chat_with_api("你好", MODEL_CONFIG, SETTINGS):
+        received.append(event)
+except model_clients.ModelClientError:
+    pass
+else:
+    raise AssertionError("上游中断必须继续向上传播")
+assert [event["content"] for event in received] == ["半截回答"], received
+assert memory.messages == [], memory.messages
+print("1e. 中途失败不保存半截回复 ok")
+
+# 1f. 关闭聊天生成器：释放链必须传递到上游模型响应和客户端
+upstream = FakeStream([delta(content="第一段"), delta(content="第二段")])
+client = FakeClient([upstream])
+model_clients.create_openai_client = lambda config: client
+chat_stream = new_chat().stream_chat_with_api("你好", MODEL_CONFIG, SETTINGS)
+assert next(chat_stream) == {"type": "delta", "content": "第一段"}
+chat_stream.close()
+assert upstream.closed and client.closed, "关闭聊天生成器时必须关闭上游响应和客户端"
+print("1f. 关闭聊天生成器释放上游资源 ok")
 
 # 2. 完整循环：模型要工具 -> 执行 -> role:tool 回传 -> 再问模型 -> 吐出答案
 client = FakeClient([
