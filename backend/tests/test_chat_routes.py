@@ -51,6 +51,7 @@ model_clients.create_openai_client = lambda config: FakeClient()
 from fastapi.testclient import TestClient  # noqa: E402
 
 import main  # noqa: E402  （必须在打桩之后导入）
+from services.workspace import get_workspace  # noqa: E402
 
 alice_client = TestClient(main.app)
 bob_client = TestClient(main.app)
@@ -62,12 +63,13 @@ def register(client, username):
     return response.json()["id"]
 
 
-def configure(user_id, model_name):
+def configure(user_id, model_name, active_categories=()):
     user_dir = Path(os.environ["DIGITAL_HUMAN_DATA_DIR"]) / "users" / user_id
     user_dir.mkdir(parents=True, exist_ok=True)
     (user_dir / "chat_settings.json").write_text(json.dumps({
         "platformId": "p1", "modelId": "m1",
-        "temperature": 0.7, "topP": 0.9, "maxTokens": 100, "activeCategories": [],
+        "temperature": 0.7, "topP": 0.9, "maxTokens": 100,
+        "activeCategories": list(active_categories),
     }, ensure_ascii=False), encoding="utf-8")
     (user_dir / "api_repository.json").write_text(json.dumps({
         "platforms": [{
@@ -120,7 +122,29 @@ assert [event["content"] for event in events if event["type"] == "delta"] == ["a
 assert events[-1] == {"type": "done"}, events
 print("5. SSE 对话 delta/done 事件 ok")
 
-# 6. 双用户并发：各自使用自己的模型配置，历史互不可见
+# 6. 知识库分类：有启用分类时按现有分类过滤；没有启用分类时完全不访问知识库
+workspace = get_workspace(alice_id)
+workspace.rag_system.get_all_categories = lambda: ["medical", "legal"]
+try:
+    configure(alice_id, "alice-model", ["medical", "gone"])
+    response = alice_client.post("/api/chat", json={"message": "带分类问"})
+    assert response.status_code == 200, response.text
+    assert workspace.chat_manager.active_categories == ["medical"], workspace.chat_manager.active_categories
+
+    def unreadable_categories():
+        raise OSError("知识库目录不可读")
+
+    workspace.rag_system.get_all_categories = unreadable_categories
+    configure(alice_id, "alice-model")
+    for path in ("/api/chat", "/api/chat/stream"):
+        response = alice_client.post(path, json={"message": "无分类问"})
+        assert response.status_code == 200, (path, response.text)
+    assert workspace.chat_manager.active_categories == [], workspace.chat_manager.active_categories
+finally:
+    del workspace.rag_system.get_all_categories
+print("6. 无启用分类时不访问知识库，有启用分类时正常过滤 ok")
+
+# 7. 双用户并发：各自使用自己的模型配置，历史互不可见
 configure(bob_id, "bob-model")
 with ThreadPoolExecutor(max_workers=2) as pool:
     alice_future = pool.submit(alice_client.post, "/api/chat", json={"message": "并发-alice"})
@@ -138,6 +162,6 @@ assert "并发-alice" in alice_contents and "并发-bob" not in alice_contents, 
 assert "并发-bob" in bob_contents and "并发-alice" not in bob_contents, bob_contents
 assert all(content != "alice-model-回复" for content in bob_contents), bob_contents
 assert all(content != "bob-model-回复" for content in alice_contents), alice_contents
-print("6. 双用户并发聊天配置与历史隔离 ok")
+print("7. 双用户并发聊天配置与历史隔离 ok")
 
 print("\n自检通过")

@@ -38,10 +38,12 @@ def prepare_chat(data, api_repository, chat_settings, chat_manager, rag_system):
     if not settings["platformId"] or not settings["modelId"]:
         raise ChatPreparationError("请先在对话设置中选择模型")
 
-    available_categories = set(rag_system.get_all_categories())
-    chat_manager.set_active_categories([
-        item for item in settings.get("activeCategories", []) if item in available_categories
-    ])
+    selected_categories = list(settings.get("activeCategories", []))
+    # 没有启用分类时完全不碰知识库，避免目录不可读拖垮整轮对话
+    if selected_categories:
+        available_categories = set(rag_system.get_all_categories())
+        selected_categories = [item for item in selected_categories if item in available_categories]
+    chat_manager.set_active_categories(selected_categories)
     model_config = api_repository.get_model_config(settings["platformId"], settings["modelId"])
     return user_input, settings, model_config
 
